@@ -1,9 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "Ringup - Ring Live View Auto-Reconnect",
-    "short_name": "Ringup",
+    "name": "Ringup",
     "version": "1.0.0",
-    "description": "Keeps Ring Live View running: clicks Reconnect on every camera as soon as Ring ends the stream, even in a background tab.",
+    "description": "Keeps Ring Live View running by reconnecting it automatically.",
     "homepage_url": "https://github.com/tyrelire/Ringup",
     "permissions": [
         "debugger",
