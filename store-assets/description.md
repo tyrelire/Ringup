@@ -1,37 +1,58 @@
 # Store Listing
 
 ## Name
-Ringup - Ring Live View Auto-Reconnect
+Ringup - Always-On Live View for Ring
 
 ## Short description (132 characters max)
-Keeps Ring Live View running: reconnects every camera as soon as Ring ends the stream, even in a background tab.
+Your Ring cameras, live, nonstop. Ringup brings every feed back the second it drops, in any language, even in a hidden tab.
 
 ## Detailed description
 
-Ring ends every Live View session after about 12 minutes. Ringup reconnects it for you, instantly, on every camera, so your cameras stay on screen around the clock.
+Your cameras should stay live as long as you are watching. Ringup makes that happen.
 
-FEATURES
-• Instant reconnect: the Reconnect button of each camera is clicked the moment it appears
-• Works in the background: Live View keeps playing when the tab is hidden or the window is minimized
-• Auto-reload when stuck: if live video stopped for 5 minutes, the page is reloaded (can be turned off)
-• Popup with a reconnect counter and settings
-• No configuration: open account.ring.com, start Live View, done
+Every few minutes, Ring stops the Live View and waits for you to press a button. Ringup presses it for you, on every camera, the instant it shows up. Leave account.ring.com open on a wall display, a spare monitor or a corner of your screen, and your feeds simply keep going.
 
-PRIVACY
-• Runs only on account.ring.com
-• Collects nothing, sends nothing, no analytics
-• No access to your Ring credentials, alarm, recordings or video
+WHAT MAKES RINGUP DIFFERENT
 
-ABOUT THE "DEBUGGING" BAR
-Ring ignores clicks made by scripts on its Reconnect buttons. To make a real click, Ringup uses the browser's debugger API for a few seconds. During that time, the browser shows a bar saying Ringup "started debugging this browser". This is expected and the bar closes on its own.
+Speaks your language
+Ringup recognises Ring's buttons by their internal identifiers first, so it does not depend on the text on screen. If Ring changes something, it falls back on the button label and understands it in English, French, Spanish, Portuguese, German, Italian, Dutch, Turkish, Czech, Polish, Hungarian, Chinese and Japanese. Your Ring account can be in any of these languages without changing a thing.
 
-BATTERY WARNING
-Continuous Live View drains the batteries of battery-powered Ring cameras quickly and can make them heat up. Use with care on battery devices.
+All cameras, all at once
+Whether one feed drops or ten, each one is brought back on its own, as soon as it stops.
 
-Open source (MIT): https://github.com/tyrelire/Ringup
+Both kinds of interruption
+Ringup handles the "Live View has ended" message on each camera and the "Continue Live View?" pause window that covers the whole page.
+
+Keeps running out of sight
+Switch tabs, minimise the window, work on something else: Ring still thinks you are watching, so the video does not pause.
+
+Recovers from a frozen page
+If no live video has played for 5 minutes, because the session expired or the page got stuck, Ringup reloads it for you. It never does this more than once every 15 minutes, and you can switch it off in one click.
+
+Polite by design
+After each click, a camera gets time to reconnect before Ringup tries again. If a button keeps ignoring it, Ringup backs off for a minute instead of hammering Ring.
+
+See what it is doing
+The popup shows how many times your cameras were brought back, when it last happened and how many reloads were needed.
+
+Nothing to set up
+Install it, open account.ring.com, start Live View. That is all.
+
+YOUR DATA STAYS YOURS
+Ringup is only active on account.ring.com. It does not collect, store or transmit anything, has no analytics, and cannot see your Ring password, your alarm, your recordings or your video.
+
+WHY YOU MAY SEE A "DEBUGGING" NOTICE
+Ring's page refuses clicks that come from an extension. To press the button like a real mouse would, Ringup briefly uses Chrome's debugger interface on the Ring tab only. While it does, Chrome shows a notice that Ringup "started debugging this browser". It disappears by itself a few seconds later. Nothing is read or recorded.
+
+A WORD ABOUT BATTERY CAMERAS
+Watching a camera nonstop keeps its radio and sensor running. On battery-powered Ring devices this empties the battery much faster and can warm the camera up. Prefer wired cameras for round-the-clock viewing.
+
 Privacy policy: https://github.com/tyrelire/Ringup/blob/main/privacy-policy.md
 
-Ringup is an unofficial extension, not affiliated with or endorsed by Ring or Amazon.
+Ringup is an independent project. It is not made, endorsed or supported by Ring or Amazon.
+
+## Single purpose (Chrome Web Store)
+Ringup keeps Ring Live View running on account.ring.com: when Ring ends or pauses a camera's live stream, the extension automatically clicks Ring's own reconnect button so the video resumes without user action.
 
 ## Permission justifications (Chrome Web Store)
 - debugger: Ring's Reconnect buttons ignore script clicks. The debugger API is attached to the Ring tab only for a few seconds to dispatch one mouse click on the button, then detached. No data is read.
