@@ -1,0 +1,40 @@
+{
+    "name": "ringup",
+    "version": "1.0.0",
+    "description": "Browser extension that keeps Ring Live View running by reconnecting it automatically",
+    "scripts": {
+        "clean": "node -e \"require('./scripts/build.js').cleanup()\"",
+        "validate": "node scripts/validate.js",
+        "build": "node scripts/convert-icons.js && node scripts/build.js",
+        "build:chrome": "node scripts/convert-icons.js && node scripts/build.js chrome",
+        "build:firefox": "node scripts/convert-icons.js && node scripts/build.js firefox",
+        "dev": "node scripts/convert-icons.js && node scripts/build.js && web-ext run -s dist/firefox/unpacked",
+        "lint": "web-ext lint -s dist/firefox/unpacked",
+        "icons": "node scripts/convert-icons.js",
+        "prebuild": "npm run clean",
+        "predev": "npm run clean"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/tyrelire/Ringup.git"
+    },
+    "keywords": [
+        "ring",
+        "camera",
+        "live-view",
+        "reconnect",
+        "browser-extension"
+    ],
+    "author": "tyrelire",
+    "license": "MIT",
+    "bugs": {
+        "url": "https://github.com/tyrelire/Ringup/issues"
+    },
+    "homepage": "https://github.com/tyrelire/Ringup#readme",
+    "devDependencies": {
+        "archiver": "^5.3.1",
+        "semver": "^7.5.4",
+        "sharp": "^0.33.2",
+        "web-ext": "^8.4.0"
+    }
+}

@@ -1,0 +1,129 @@
+name: Build Extensions
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: write
+  packages: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get version from package.json
+      id: package_version
+      run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+    - name: Extract version from manifest
+      id: manifest_version
+      run: |
+        VERSION=$(grep -o '"version": *"[^"]*"' src/chrome/manifest.json | cut -d'"' -f4)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Extracted version from manifest: $VERSION"
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Generate icons
+      run: node scripts/convert-icons.js
+
+    - name: Validate extension files
+      run: node scripts/validate.js
+
+    - name: Create build directories
+      run: |
+        mkdir -p dist/chrome/unpacked
+        mkdir -p dist/edge/unpacked
+        mkdir -p dist/firefox/unpacked
+
+    - name: Build extensions
+      run: node scripts/build.js
+
+    - name: Upload Chrome artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: chrome-extension
+        path: dist/chrome/packed/ringup-chrome.zip
+        compression-level: 9
+
+    - name: Upload Edge artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: edge-extension
+        path: dist/edge/packed/ringup-edge.zip
+        compression-level: 9
+
+    - name: Upload Firefox artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: firefox-extension
+        path: dist/firefox/packed/ringup-firefox.xpi
+        compression-level: 9
+
+    - name: Check if release
+      id: check_release
+      run: |
+        if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+          echo "is_release=true" >> $GITHUB_OUTPUT
+          echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          echo "needs_tag=false" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.event.head_commit.message }}" == *"RELEASE"* ]]; then
+          echo "is_release=true" >> $GITHUB_OUTPUT
+          echo "version=${{ steps.manifest_version.outputs.version }}" >> $GITHUB_OUTPUT
+          echo "needs_tag=true" >> $GITHUB_OUTPUT
+        else
+          echo "is_release=false" >> $GITHUB_OUTPUT
+          echo "needs_tag=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Create tag for release
+      if: steps.check_release.outputs.needs_tag == 'true'
+      run: |
+        TAG_NAME="v${{ steps.manifest_version.outputs.version }}"
+        echo "Creating tag $TAG_NAME"
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git tag -a $TAG_NAME -m "Release $TAG_NAME"
+        git push origin $TAG_NAME
+
+    - name: Create Release
+      if: steps.check_release.outputs.is_release == 'true'
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.check_release.outputs.version }}
+        name: Release v${{ steps.check_release.outputs.version }}
+        draft: false
+        prerelease: false
+        body: |
+          Changes in this Release v${{ steps.check_release.outputs.version }}
+          
+          ${{ github.event.head_commit.message }}
+          
+          Downloads:
+          - Chrome: ringup-chrome.zip
+          - Edge: ringup-edge.zip
+          - Firefox: ringup-firefox.xpi
+        files: |
+          ./dist/chrome/packed/ringup-chrome.zip
+          ./dist/edge/packed/ringup-edge.zip
+          ./dist/firefox/packed/ringup-firefox.xpi 
