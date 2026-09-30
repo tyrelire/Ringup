@@ -2,7 +2,7 @@ const POLL_MS = 6000;
 const POLL_FAST_MS = 1200;
 const OBSERVER_THROTTLE_MS = 250;
 
-const SETTINGS_DEFAULTS = { debug: false, autoReload: true };
+const SETTINGS_DEFAULTS = { debug: false, autoReload: true, darkMode: true };
 const settings = { ...SETTINGS_DEFAULTS };
 
 function extensionStorage() {
@@ -20,12 +20,14 @@ function loadSettings() {
         storage.get(SETTINGS_DEFAULTS, items => {
             void chrome.runtime.lastError;
             if (items) Object.assign(settings, items);
+            updateDarkMode();
         });
         chrome.storage.onChanged.addListener((changes, area) => {
             if (area !== 'local') return;
             for (const key of Object.keys(SETTINGS_DEFAULTS)) {
                 if (changes[key]) settings[key] = changes[key].newValue;
             }
+            updateDarkMode();
         });
     } catch (_) {}
 }
@@ -45,6 +47,71 @@ function debugLog(msg) {
     if (settings.debug) console.log('[Ringup] ' + msg);
 }
 
+const DARK_CLASS = 'ringup-dark';
+const DARK_PATH = /^\/account\/dashboard/;
+const DARK_FILTER = 'invert(1) hue-rotate(180deg)';
+
+function updateDarkMode() {
+    const root = document.documentElement;
+    if (!root) return;
+    root.classList.toggle(DARK_CLASS, !!settings.darkMode && DARK_PATH.test(location.pathname));
+    if (document.body) markDarkExempt();
+}
+
+const DARK_EXEMPT_CLASS = 'ringup-dark-exempt';
+const PLAYER_SELECTOR = 'video, [data-testid="video-player-header"]';
+
+function playerRootOf(el) {
+    const dialog = el.closest('[role="dialog"], [aria-modal="true"]');
+    if (dialog) return dialog;
+    let root = null;
+    for (let node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+        if (getComputedStyle(node).position === 'fixed') root = node;
+    }
+    return root;
+}
+
+function markDarkExempt() {
+    const roots = new Set();
+    if (document.documentElement.classList.contains(DARK_CLASS)) {
+        for (const el of document.querySelectorAll(PLAYER_SELECTOR)) {
+            const root = playerRootOf(el);
+            if (root) roots.add(root);
+        }
+    }
+    for (const el of document.querySelectorAll('.' + DARK_EXEMPT_CLASS)) {
+        if (!roots.has(el)) el.classList.remove(DARK_EXEMPT_CLASS);
+    }
+    for (const root of roots) {
+        if ([...roots].some(other => other !== root && other.contains(root))) continue;
+        root.classList.add(DARK_EXEMPT_CLASS);
+    }
+}
+
+function watchDarkMode() {
+    let lastPath = null;
+    let lastCheck = 0;
+    let pending = null;
+    const check = () => {
+        pending = null;
+        lastCheck = Date.now();
+        if (location.pathname !== lastPath) {
+            lastPath = location.pathname;
+            updateDarkMode();
+        }
+        markDarkExempt();
+    };
+    const schedule = () => {
+        if (pending) return;
+        const wait = OBSERVER_THROTTLE_MS - (Date.now() - lastCheck);
+        if (wait <= 0) check();
+        else pending = setTimeout(check, wait);
+    };
+    check();
+    new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+    window.addEventListener('popstate', schedule);
+}
+
 function injectStyles() {
     if (!document.head) return false;
     const style = document.createElement('style');
@@ -58,6 +125,19 @@ function injectStyles() {
         .ringup-notification.show { opacity: 1; }
         .ringup-notification svg { width: 100%; height: 100%; animation: rotate 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
         .ringup-notification circle { stroke: url(#ringup-gradient); }
+        html.${DARK_CLASS} { filter: ${DARK_FILTER}; }
+        html.${DARK_CLASS} body { background-color: #fff !important; min-height: 100vh; }
+        html.${DARK_CLASS} video,
+        html.${DARK_CLASS} canvas,
+        html.${DARK_CLASS} iframe,
+        html.${DARK_CLASS} img:not([class*="IconImage"]),
+        html.${DARK_CLASS} [class*="styled__Thumbnail-"],
+        html.${DARK_CLASS} .${DARK_EXEMPT_CLASS} { filter: ${DARK_FILTER}; }
+        html.${DARK_CLASS} .${DARK_EXEMPT_CLASS} video,
+        html.${DARK_CLASS} .${DARK_EXEMPT_CLASS} canvas,
+        html.${DARK_CLASS} .${DARK_EXEMPT_CLASS} iframe,
+        html.${DARK_CLASS} .${DARK_EXEMPT_CLASS} img,
+        html.${DARK_CLASS} .${DARK_EXEMPT_CLASS} [class*="styled__Thumbnail-"] { filter: none; }
     `;
     document.head.appendChild(style);
     return true;
@@ -77,12 +157,20 @@ const RECONNECT_WORDS = [
 
 const MODAL_ONLY_WORDS = ['Continue', 'Resume', 'Continuer', 'Reprendre', 'Oui', 'Yes'];
 
+const ENDED_PHRASES = [
+    'Live view ended', 'Live View has ended', 'Live video ended', 'Live stream ended',
+    'Vidéo en direct terminée', 'La vidéo en direct est terminée', 'Vidéo en direct arrêtée',
+    'Liveansicht beendet', 'Live-Ansicht beendet', 'Vista en vivo finalizada',
+    'Vídeo en directo finalizado', 'Visualizzazione live terminata', 'Liveweergave beëindigd'
+];
+
 const MODAL_PHRASES = [
     'Continue Live View', 'Live View paused', 'Reconnect or end', 'End live view',
     'Continuer la vidéo en direct', 'Vidéo en direct en pause', 'Vidéo en direct suspendue',
     'Reconnecter ou mettre fin', 'Mettre fin à la vidéo en direct', 'Terminer la vidéo en direct',
     'Mettre fin à la session', 'Toujours là', 'Êtes-vous toujours', 'en pause',
-    'Poursuivre la vidéo en direct', 'Vidéo en direct mise en pause', 'Reconnectez-vous'
+    'Poursuivre la vidéo en direct', 'Vidéo en direct mise en pause', 'Reconnectez-vous',
+    ...ENDED_PHRASES
 ];
 
 const MAX_LABEL_LEN = 40;
@@ -134,6 +222,46 @@ function findKnownButtons() {
     if (modalButton && isVisible(modalButton) && !isDisabled(modalButton)) return [modalButton];
     return [...document.querySelectorAll(CAMERA_RECONNECT_SELECTOR)]
         .filter(el => isVisible(el) && !isDisabled(el) && isOnTop(el));
+}
+
+function findEndedMessages() {
+    const phrases = ENDED_PHRASES.map(norm);
+    const found = [];
+    for (const el of document.querySelectorAll('p, span, div, h1, h2, h3, h4, h5, h6, [role="alert"], [role="status"]')) {
+        const text = norm(el.textContent);
+        if (!text || text.length > 80 || !phrases.some(p => text === p || text.startsWith(p))) continue;
+        if (!isVisible(el)) continue;
+        if (found.some(f => f.contains(el))) continue;
+        for (let i = found.length - 1; i >= 0; i--) {
+            if (el.contains(found[i])) found.splice(i, 1);
+        }
+        found.push(el);
+    }
+    return found;
+}
+
+function isReconnectLabel(el) {
+    return labelsOf(el).some(l => RECONNECT_WORDS.some(w => l.includes(norm(w))));
+}
+
+function findEndedReconnectButtons() {
+    const targets = [];
+    for (const message of findEndedMessages()) {
+        let container = message.parentElement;
+        for (let depth = 0; container && container !== document.body && depth < 6; depth++) {
+            const clickables = [...container.querySelectorAll('button, [role="button"], a')]
+                .filter(el => isVisible(el) && !isDisabled(el) && isReconnectLabel(el));
+            const loose = clickables.length ? [] : [...container.querySelectorAll('*')]
+                .filter(el => isVisible(el) && isReconnectLabel(el) && ![...el.children].some(isReconnectLabel));
+            const pick = clickables[0] || loose[0];
+            if (pick) {
+                if (!targets.includes(pick)) targets.push(pick);
+                break;
+            }
+            container = container.parentElement;
+        }
+    }
+    return targets;
 }
 
 function isInsideReconnectModal(el) {
@@ -286,6 +414,9 @@ function isDue(el) {
 async function findAndClickReconnect(useTextSearch = true) {
     if (clicking) return false;
     let targets = findKnownButtons();
+    for (const el of findEndedReconnectButtons()) {
+        if (!targets.includes(el)) targets.push(el);
+    }
     if (!targets.length && useTextSearch) {
         const el = findReconnectByText();
         if (el) targets = [el];
@@ -329,6 +460,32 @@ const WATCHDOG_MS = 5 * 60000;
 const MIN_RELOAD_INTERVAL_MS = 15 * 60000;
 const RELOAD_KEY = 'ringupReloadedAt';
 
+const ENDED_RELOAD_MS = 45000;
+const MIN_ENDED_RELOAD_INTERVAL_MS = 3 * 60000;
+
+let endedSince = 0;
+
+function checkEndedWatchdog() {
+    if (!findEndedMessages().length) {
+        endedSince = 0;
+        return;
+    }
+    const now = Date.now();
+    if (!endedSince) {
+        endedSince = now;
+        debugLog('Live view ended message detected');
+        return;
+    }
+    if (!settings.autoReload || now - endedSince < ENDED_RELOAD_MS) return;
+    let lastReload = 0;
+    try { lastReload = Number(sessionStorage.getItem(RELOAD_KEY)) || 0; } catch (_) {}
+    if (now - lastReload < MIN_ENDED_RELOAD_INTERVAL_MS) return;
+    try { sessionStorage.setItem(RELOAD_KEY, String(now)); } catch (_) {}
+    debugLog('Live view ended message still shown after ' + (ENDED_RELOAD_MS / 1000) + 's; reloading the page');
+    bumpStat('reloads');
+    location.reload();
+}
+
 const videoTimes = new WeakMap();
 let watchedUrl = null;
 let lastVideoProgressAt = 0;
@@ -362,7 +519,7 @@ function checkVideoWatchdog() {
 }
 
 function inspectReconnectButton() {
-    const el = findKnownButtons()[0] || findReconnectByText();
+    const el = findKnownButtons()[0] || findEndedReconnectButtons()[0] || findReconnectByText();
     if (!el) {
         console.log('[Ringup] Inspect: no Reconnect button found');
         return null;
@@ -484,7 +641,7 @@ function initialize() {
 
         function scheduleNextPoll() {
             if (pollTimer) clearTimeout(pollTimer);
-            const interval = findKnownButtons().length ? POLL_FAST_MS : POLL_MS;
+            const interval = findKnownButtons().length || findEndedMessages().length ? POLL_FAST_MS : POLL_MS;
             pollTimer = setTimeout(() => {
                 poll();
                 scheduleNextPoll();
@@ -495,6 +652,7 @@ function initialize() {
             logScanState();
             reconnect(true);
             checkVideoWatchdog();
+            checkEndedWatchdog();
         }
 
         function completeInitialization() {
@@ -505,6 +663,7 @@ function initialize() {
             if (document.body && !insertNotification()) {
                 setTimeout(insertNotification, 1000);
             }
+            watchDarkMode();
             detectTrustedClicks();
             observeKnownButtons(() => reconnect(false));
             poll();

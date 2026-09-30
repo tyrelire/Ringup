@@ -11,7 +11,8 @@ Works on [account.ring.com](https://account.ring.com) in Chrome, Edge and other 
 - **Instant reconnect**: Reconnect buttons are clicked the moment they appear, on all cameras at once.
 - **Works in the background**: the Ring tab keeps playing when it is hidden or the window is minimized.
 - **Auto-reload when stuck**: if live video stopped for 5 minutes and did not come back (expired session, frozen page), the page is reloaded. At most once every 15 minutes, and never on a page where no video played.
-- **Popup**: number of reconnects, time of the last one, page reloads, and switches for auto-reload and debug logs.
+- **Dark dashboard**: the Ring dashboard gets a dark theme, while camera thumbnails and live video keep their true colors. On by default, can be turned off in the popup.
+- **Popup**: number of reconnects, time of the last one, page reloads, and switches for auto-reload, dark dashboard and debug logs.
 - **Private**: runs only on account.ring.com, collects nothing, sends nothing anywhere.
 
 ## Install
