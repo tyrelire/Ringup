@@ -138,6 +138,13 @@ function injectStyles() {
         html.${DARK_CLASS} .${DARK_EXEMPT_CLASS} iframe,
         html.${DARK_CLASS} .${DARK_EXEMPT_CLASS} img,
         html.${DARK_CLASS} .${DARK_EXEMPT_CLASS} [class*="styled__Thumbnail-"] { filter: none; }
+        html.${DARK_CLASS} :fullscreen { filter: ${DARK_FILTER}; }
+        html.${DARK_CLASS} video:fullscreen,
+        html.${DARK_CLASS} canvas:fullscreen,
+        html.${DARK_CLASS} iframe:fullscreen,
+        html.${DARK_CLASS} img:not([class*="IconImage"]):fullscreen,
+        html.${DARK_CLASS} [class*="styled__Thumbnail-"]:fullscreen,
+        html.${DARK_CLASS} .${DARK_EXEMPT_CLASS}:fullscreen { filter: none; }
     `;
     document.head.appendChild(style);
     return true;
