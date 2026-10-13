@@ -25,6 +25,8 @@
         button {
             background: none; border: 0; padding: 0; color: var(--accent); font: inherit; cursor: pointer;
         }
+        .logs { display: flex; gap: 12px; align-items: baseline; margin-left: 21px; }
+        .logs span { color: var(--muted); margin-left: auto; }
     </style>
 </head>
 <body>
@@ -46,8 +48,13 @@
     </label>
     <label>
         <input type="checkbox" id="debug">
-        <span>Debug logs<small>Shown in the Ring page's console (F12)</small></span>
+        <span>Debug logs<small>Shown in the Ring page's console (F12) and saved here, even across page reloads</small></span>
     </label>
+    <div class="logs">
+        <button id="copyLogs" type="button">Copy logs</button>
+        <button id="clearLogs" type="button">Clear logs</button>
+        <span id="logCount"></span>
+    </div>
     <script src="popup.js"></script>
 </body>
 </html>

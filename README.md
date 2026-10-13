@@ -12,7 +12,7 @@ Works on [account.ring.com](https://account.ring.com) in Chrome, Edge and other 
 - **Works in the background**: the Ring tab keeps playing when it is hidden or the window is minimized.
 - **Auto-reload when stuck**: if live video stopped for 5 minutes and did not come back (expired session, frozen page), the page is reloaded. At most once every 15 minutes, and never on a page where no video played.
 - **Dark dashboard**: the Ring dashboard gets a dark theme, while camera thumbnails and live video keep their true colors. On by default, can be turned off in the popup.
-- **Popup**: number of reconnects, time of the last one, page reloads, and switches for auto-reload, dark dashboard and debug logs.
+- **Popup**: number of reconnects, time of the last one, page reloads, and switches for auto-reload, dark dashboard and debug logs. Debug logs are kept across page reloads and can be copied from the popup.
 - **Private**: runs only on account.ring.com, collects nothing, sends nothing anywhere.
 
 ## Install
@@ -27,7 +27,7 @@ Ringup is not on the extension stores yet. To install it from source:
 ## How it works
 
 - Ring shows a "Live View has ended / Reconnect" button on each camera when it ends a session, and a "Continue Live View" modal when it pauses one. Ringup watches the page for these buttons (by Ring's `data-testid`, with a fallback on their label in about 15 languages) and clicks them.
-- Ring ignores clicks made by scripts on these buttons. Ringup's background worker makes a real mouse click through the browser's `debugger` API. While it does, the browser shows a bar saying Ringup "started debugging this browser". This is expected: the bar closes a few seconds after the click, so it appears briefly about every 12 minutes.
+- Ring ignores clicks made by scripts on these buttons. Ringup's background worker makes a real mouse click through the browser's `debugger` API. While it does, the browser shows a bar saying Ringup "started debugging this browser". This is expected: the bar closes a few seconds after the click, so it appears briefly about every 12 minutes. If the click does not reach the button (for example because Ring's player controls cover it), Ringup focuses the button and presses Enter on it the same way.
 - After a click, each button gets 10 seconds to reconnect before it is clicked again. A button that ignores 3 clicks is left alone for a minute.
 - A small script makes the tab always look visible and active to Ring, so it does not pause Live View when you switch tabs.
 
@@ -45,7 +45,7 @@ Ringup has no access to your Ring credentials, alarm, arm/disarm features, recor
 
 - **Battery cameras**: continuous Live View drains batteries quickly and can make them heat up. Use Ringup with care on battery-powered devices.
 - **Firefox**: Firefox has no equivalent of the `debugger` API, so Ringup cannot click the per-camera Reconnect buttons there. The Firefox build only closes the "Continue Live View" modal.
-- **Ring changes**: if Ring redesigns its page, detection may need an update. Please [open an issue](https://github.com/tyrelire/Ringup/issues) with debug logs.
+- **Ring changes**: if Ring redesigns its page, detection may need an update. Please [open an issue](https://github.com/tyrelire/Ringup/issues) with debug logs (turn them on in the popup, wait for the problem, then click **Copy logs**).
 
 ## Troubleshooting
 

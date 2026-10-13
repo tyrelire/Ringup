@@ -1,6 +1,6 @@
 # Ringup - Privacy Policy and Terms of Use
 
-Last updated: September 28, 2026
+Last updated: October 5, 2026
 
 ## Privacy Policy
 
@@ -9,11 +9,12 @@ Last updated: September 28, 2026
 - It reads nothing from your Ring account, cameras or video.
 - It uses no analytics, tracking, cookies or third-party services, and makes no network requests.
 - It stores only its own settings and counters (number of reconnect clicks and page reloads, and when the last ones happened), locally in the browser's extension storage. Uninstalling Ringup deletes them.
+- When debug logs are turned on, it also stores a log of what happens on the Ring page (page addresses, video and connection events, Ring's own error messages) in the same local storage, so you can copy it from the popup. This log never leaves your browser, is cleared with "Clear logs", and is deleted when Ringup is uninstalled.
 
 ### Permissions
 - **Access to account.ring.com**: Ringup runs only on this site, to find and click Ring's Reconnect buttons.
 - **debugger** (Chrome and Edge): used only to make a real mouse click on those buttons, in the Ring tab, for a few seconds at a time. Nothing is read through it.
-- **storage**: keeps the settings and counters described above, locally.
+- **storage**: keeps the settings, counters and optional debug log described above, locally.
 
 ## Terms of Use
 

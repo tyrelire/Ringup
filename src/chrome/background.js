@@ -65,15 +65,35 @@ async function trustedClick(tabId, x, y) {
     }
 }
 
+async function trustedEnter(tabId) {
+    const target = await attach(tabId);
+    const send = params => call(chrome.debugger.sendCommand, target, 'Input.dispatchKeyEvent', params);
+    const base = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+    try {
+        await withTimeout((async () => {
+            await send({ ...base, type: 'keyDown', text: '\r', unmodifiedText: '\r' });
+            await send({ ...base, type: 'keyUp' });
+        })(), CLICK_TIMEOUT_MS);
+    } finally {
+        scheduleDetach(tabId);
+    }
+}
+
+const ACTIONS = {
+    trustedClick: (tabId, msg) => trustedClick(tabId, msg.x, msg.y),
+    trustedEnter: tabId => trustedEnter(tabId)
+};
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!sender.tab) return false;
     if (msg.type === 'ping') {
         sendResponse({ ok: true });
         return false;
     }
-    if (msg.type !== 'trustedClick') return false;
+    const action = ACTIONS[msg.type];
+    if (!action) return false;
     queue = queue
-        .then(() => trustedClick(sender.tab.id, msg.x, msg.y))
+        .then(() => action(sender.tab.id, msg))
         .then(() => sendResponse({ ok: true }), e => sendResponse({ ok: false, error: e.message }));
     return true;
 });

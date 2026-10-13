@@ -13,23 +13,80 @@ function extensionStorage() {
     }
 }
 
+const LOG_KEY = 'ringupLog';
+const LOG_MAX = 2000;
+const LOG_FLUSH_MS = 2000;
+
+let settingsLoaded = false;
+let persistedLog = null;
+let unsavedLog = [];
+let logFlushTimer = null;
+const earlyLog = [];
+
 function loadSettings() {
     const storage = extensionStorage();
     if (!storage) return;
     try {
-        storage.get(SETTINGS_DEFAULTS, items => {
+        storage.get({ ...SETTINGS_DEFAULTS, [LOG_KEY]: [] }, items => {
             void chrome.runtime.lastError;
-            if (items) Object.assign(settings, items);
+            items = items || {};
+            for (const key of Object.keys(SETTINGS_DEFAULTS)) {
+                if (key in items) settings[key] = items[key];
+            }
+            persistedLog = Array.isArray(items[LOG_KEY]) ? items[LOG_KEY] : [];
+            settingsLoaded = true;
+            for (const entry of earlyLog.splice(0)) writeLog(entry);
             updateDarkMode();
         });
         chrome.storage.onChanged.addListener((changes, area) => {
             if (area !== 'local') return;
             for (const key of Object.keys(SETTINGS_DEFAULTS)) {
-                if (changes[key]) settings[key] = changes[key].newValue;
+                if (changes[key]) {
+                    settings[key] = changes[key].newValue;
+                    debugLog('Setting changed: ' + key + ' = ' + changes[key].newValue);
+                }
             }
+            if (changes[LOG_KEY]) persistedLog = changes[LOG_KEY].newValue || [];
             updateDarkMode();
         });
+    } catch (_) {
+        settingsLoaded = true;
+    }
+}
+
+function timestamp() {
+    const d = new Date();
+    const pad = (n, len = 2) => String(n).padStart(len, '0');
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' +
+        pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + '.' + pad(d.getMilliseconds(), 3);
+}
+
+function writeLog(entry) {
+    if (!settings.debug) return;
+    console.log('[Ringup] ' + entry);
+    unsavedLog.push(entry);
+    if (!logFlushTimer) logFlushTimer = setTimeout(flushLog, LOG_FLUSH_MS);
+}
+
+function flushLog() {
+    clearTimeout(logFlushTimer);
+    logFlushTimer = null;
+    const storage = extensionStorage();
+    if (!storage || !persistedLog || !unsavedLog.length) return;
+    persistedLog = persistedLog.concat(unsavedLog).slice(-LOG_MAX);
+    unsavedLog = [];
+    try {
+        storage.set({ [LOG_KEY]: persistedLog }, () => void chrome.runtime.lastError);
     } catch (_) {}
+}
+
+const throttledLogs = new Map();
+
+function debugLogEvery(key, ms, msg) {
+    const now = Date.now();
+    if (now - (throttledLogs.get(key) || 0) < ms) return;
+    throttledLogs.set(key, now);
+    debugLog(msg);
 }
 
 function bumpStat(name) {
@@ -44,7 +101,9 @@ function bumpStat(name) {
 }
 
 function debugLog(msg) {
-    if (settings.debug) console.log('[Ringup] ' + msg);
+    const entry = timestamp() + ' ' + msg;
+    if (!settingsLoaded) earlyLog.push(entry);
+    else writeLog(entry);
 }
 
 const DARK_CLASS = 'ringup-dark';
@@ -90,11 +149,16 @@ function markDarkExempt() {
 
 function watchDarkMode() {
     let lastPath = null;
+    let lastHref = location.href;
     let lastCheck = 0;
     let pending = null;
     const check = () => {
         pending = null;
         lastCheck = Date.now();
+        if (location.href !== lastHref) {
+            debugLog('URL changed: ' + lastHref + ' -> ' + location.href);
+            lastHref = location.href;
+        }
         if (location.pathname !== lastPath) {
             lastPath = location.pathname;
             updateDarkMode();
@@ -171,6 +235,12 @@ const ENDED_PHRASES = [
     'Vídeo en directo finalizado', 'Visualizzazione live terminata', 'Liveweergave beëindigd'
 ];
 
+const UNREACHABLE_PHRASES = [
+    'Impossible de se connecter', 'Connexion impossible', 'Unable to connect', 'Could not connect',
+    "Couldn't connect", 'Verbindung nicht möglich', 'No se puede conectar', 'Impossibile connettersi',
+    'Kan geen verbinding maken'
+];
+
 const MODAL_PHRASES = [
     'Continue Live View', 'Live View paused', 'Reconnect or end', 'End live view',
     'Continuer la vidéo en direct', 'Vidéo en direct en pause', 'Vidéo en direct suspendue',
@@ -245,6 +315,15 @@ function findEndedMessages() {
         found.push(el);
     }
     return found;
+}
+
+function findUnreachableMessages() {
+    const phrases = UNREACHABLE_PHRASES.map(norm);
+    return [...document.querySelectorAll('p, span, div, [role="alert"], [role="status"]')].filter(el => {
+        const text = norm(el.textContent);
+        if (!text || text.length > 200 || !phrases.some(p => text.startsWith(p))) return false;
+        return ![...el.children].some(child => phrases.some(p => norm(child.textContent).startsWith(p))) && isVisible(el);
+    });
 }
 
 function isReconnectLabel(el) {
@@ -350,14 +429,13 @@ function logScanState() {
     const changed = summary !== lastScanSummary;
     lastScanSummary = summary;
     pollsSinceLastLog = 0;
-    console.log('[Ringup] Scan' + (changed ? ' (changed)' : ' (heartbeat)') + ':\n' + JSON.stringify({
-        time: new Date().toLocaleTimeString(),
+    debugLog('Scan' + (changed ? ' (changed)' : ' (heartbeat)') + ': ' + JSON.stringify({
         tabHidden: document.hidden,
         knownButtons: known,
         textFallback: picked ? labelsOf(picked).join(' | ') : null,
         matches,
         dialogs: [...new Set(dialogs)]
-    }, null, 2));
+    }));
 }
 
 let trustedClicks = false;
@@ -365,39 +443,89 @@ let trustedClicks = false;
 function detectTrustedClicks() {
     try {
         chrome.runtime.sendMessage({ type: 'ping' }, response => {
-            void chrome.runtime.lastError;
+            const err = chrome.runtime.lastError;
             trustedClicks = !!(response && response.ok);
-            debugLog('Trusted clicks ' + (trustedClicks ? 'available' : 'unavailable (synthetic clicks only)'));
+            debugLog('Trusted clicks ' + (trustedClicks ? 'available' : 'unavailable (synthetic clicks only)') +
+                (err ? ': ' + err.message : ''));
         });
-    } catch (_) {}
+    } catch (e) {
+        debugLog('Trusted clicks unavailable: ' + e.message);
+    }
 }
 
-function requestTrustedClick(el) {
+function sendTrustedAction(message) {
     return new Promise(resolve => {
-        const center = centerOf(el);
-        if (!isInViewport(center) || !isOnTop(el)) {
-            debugLog('Click skipped: button off screen or covered');
-            resolve(false);
-            return;
-        }
+        const startedAt = Date.now();
         try {
-            chrome.runtime.sendMessage({ type: 'trustedClick', x: center.x, y: center.y }, response => {
-                void chrome.runtime.lastError;
+            chrome.runtime.sendMessage(message, response => {
+                const err = chrome.runtime.lastError;
+                let failure = 'no answer';
+                if (response) failure = response.error;
+                else if (err) failure = err.message;
                 const ok = !!(response && response.ok);
-                if (!ok) debugLog('Trusted click failed: ' + (response ? response.error : 'no answer'));
-                resolve(ok);
+                if (!ok) debugLog('Trusted ' + message.type + ' failed: ' + failure);
+                resolve({ ok, ms: Date.now() - startedAt });
             });
         } catch (e) {
-            debugLog('Trusted click failed: ' + e.message);
-            resolve(false);
+            debugLog('Trusted ' + message.type + ' failed: ' + e.message);
+            resolve({ ok: false, ms: Date.now() - startedAt });
         }
     });
+}
+
+function describeNode(node) {
+    if (!(node instanceof Element)) return String(node);
+    const testId = node.getAttribute('data-testid');
+    const cls = typeof node.className === 'string' ? node.className.split(/\s+/)[0] : '';
+    return node.tagName + (testId ? '[data-testid="' + testId + '"]' : '') + (cls ? '.' + cls : '');
+}
+
+async function requestTrustedEnter(el) {
+    try { el.focus({ preventScroll: true }); } catch (_) {}
+    if (document.activeElement !== el) {
+        debugLog('Enter fallback skipped: could not focus the button (focused: ' + describeNode(document.activeElement) + ')');
+        return false;
+    }
+    let reached = false;
+    const onClick = e => {
+        if (e.isTrusted && el.contains(e.target)) reached = true;
+    };
+    document.addEventListener('click', onClick, true);
+    const result = await sendTrustedAction({ type: 'trustedEnter' });
+    document.removeEventListener('click', onClick, true);
+    if (result.ok) debugLog('Trusted Enter done in ' + result.ms + ' ms; reached the button: ' + reached);
+    return result.ok;
+}
+
+async function requestTrustedClick(el) {
+    const center = centerOf(el);
+    if (!isInViewport(center) || !isOnTop(el)) {
+        debugLog('Mouse click not possible (button off screen or covered); using Enter');
+        return requestTrustedEnter(el);
+    }
+    debugLog('Trusted click requested at ' + Math.round(center.x) + ',' + Math.round(center.y) + ' on "' + (labelsOf(el)[0] || el.tagName) + '"');
+    let landedOn = null;
+    const onClick = e => {
+        if (e.isTrusted) landedOn = e.target;
+    };
+    document.addEventListener('click', onClick, true);
+    const result = await sendTrustedAction({ type: 'trustedClick', x: center.x, y: center.y });
+    document.removeEventListener('click', onClick, true);
+    if (!result.ok) return false;
+    if (landedOn && el.contains(landedOn)) {
+        debugLog('Trusted click done in ' + result.ms + ' ms; it reached the button');
+        return true;
+    }
+    debugLog('Trusted click done in ' + result.ms + ' ms but landed on ' + (landedOn ? describeNode(landedOn) : 'nothing') +
+        ' instead of the button; pressing Enter on the button');
+    return requestTrustedEnter(el);
 }
 
 async function clickElement(el) {
     try { el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' }); } catch (_) {}
     if (trustedClicks) return requestTrustedClick(el);
     const { x, y } = centerOf(el);
+    debugLog('Synthetic click at ' + Math.round(x) + ',' + Math.round(y) + ' on "' + (labelsOf(el)[0] || el.tagName) + '"');
     const opts = { bubbles: true, cancelable: true, view: window, detail: 1, button: 0, clientX: x, clientY: y };
     try {
         el.focus();
@@ -433,7 +561,12 @@ async function findAndClickReconnect(useTextSearch = true) {
         return false;
     }
     const due = targets.filter(isDue);
-    if (!due.length) return false;
+    if (!due.length) {
+        debugLogEvery('notDue', 5000, targets.length + ' reconnect target(s) waiting for their retry delay');
+        return false;
+    }
+    debugLog('Reconnect targets: ' + targets.length + ', due now: ' + due.length + ' [' +
+        due.map(el => labelsOf(el)[0] || el.tagName).join(', ') + ']');
 
     clicking = true;
     let clicked = false;
@@ -466,63 +599,291 @@ async function findAndClickReconnect(useTextSearch = true) {
 const WATCHDOG_MS = 5 * 60000;
 const MIN_RELOAD_INTERVAL_MS = 15 * 60000;
 const RELOAD_KEY = 'ringupReloadedAt';
+const RELOAD_REASON_KEY = 'ringupReloadReason';
 
-const ENDED_RELOAD_MS = 45000;
-const MIN_ENDED_RELOAD_INTERVAL_MS = 3 * 60000;
+const ENDED_RETRY_MS = 45000;
+
+const STALL_LOG_MS = 30000;
+const STATUS_LOG_MS = 60000;
+
+const STUCK_RELOAD_MS = 60000;
+const STUCK_MIN_RELOAD_INTERVAL_MS = 5 * 60000;
+const RESUME_KEY = 'ringupResumeLive';
+const RESUME_WINDOW_MS = 2 * 60000;
+const START_LIVE_SELECTOR = '[data-testid="device-preview-list__start-live-views-button"]';
 
 let endedSince = 0;
+let endedRetryAt = 0;
+let stuckSince = 0;
+let reloadReason = null;
+let resumeLiveUntil = 0;
+
+function lastReloadAt() {
+    try { return Number(sessionStorage.getItem(RELOAD_KEY)) || 0; } catch (_) { return 0; }
+}
+
+function secondsSince(ms) {
+    return Math.round((Date.now() - ms) / 1000) + 's';
+}
+
+function isLiveViewOpen() {
+    return !!document.querySelector('video, [data-testid="video-player-header"], ' + ERROR_MODAL_SELECTOR);
+}
+
+function takeResumeFlag() {
+    try {
+        if (sessionStorage.getItem(RESUME_KEY)) {
+            sessionStorage.removeItem(RESUME_KEY);
+            resumeLiveUntil = Date.now() + RESUME_WINDOW_MS;
+        }
+    } catch (_) {}
+}
+
+async function resumeLiveView() {
+    if (!resumeLiveUntil || clicking) return;
+    if (Date.now() > resumeLiveUntil || isLiveViewOpen()) {
+        if (!isLiveViewOpen()) debugLog('Live view not restarted: no "start live views" button found after the reload');
+        resumeLiveUntil = 0;
+        return;
+    }
+    const button = document.querySelector(START_LIVE_SELECTOR);
+    if (!button || !isVisible(button) || isDisabled(button)) return;
+    resumeLiveUntil = 0;
+    debugLog('Restarting live views after the Ringup reload');
+    clicking = true;
+    try {
+        await clickElement(button);
+    } finally {
+        clicking = false;
+    }
+}
+
+function reloadPage(reason) {
+    reloadReason = reason;
+    try {
+        sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
+        sessionStorage.setItem(RELOAD_REASON_KEY, reason);
+        if (isLiveViewOpen() || findUnreachableMessages().length) sessionStorage.setItem(RESUME_KEY, '1');
+    } catch (_) {}
+    debugLog('Reloading the page: ' + reason);
+    bumpStat('reloads');
+    flushLog();
+    location.reload();
+}
+
+const ERROR_MODAL_SELECTOR = '[data-testid^="live-view__error-modal"]';
+let lastErrorSummary = '';
+
+function describeErrorModals() {
+    return [...document.querySelectorAll(ERROR_MODAL_SELECTOR)].filter(isVisible).map(modal => {
+        const kind = modal.getAttribute('data-testid').replace('live-view__error-modal__', '');
+        const message = modal.querySelector('[data-testid="video-error__message"]');
+        return kind + (message ? ' "' + norm(message.textContent).slice(0, 120) + '"' : '');
+    });
+}
+
+function checkStuckErrors(now) {
+    const playing = [...document.querySelectorAll('video')].some(v => !v.paused && !v.ended && v.readyState > 2);
+    if (playing || findKnownButtons().length || findEndedReconnectButtons().length) {
+        stuckSince = 0;
+        return;
+    }
+    if (!stuckSince) {
+        stuckSince = now;
+        debugLog('Live view error with no Reconnect button: ' + findUnreachableMessages().map(el => '"' + norm(el.textContent).slice(0, 120) + '"').join(', '));
+        return;
+    }
+    if (now - stuckSince < STUCK_RELOAD_MS) return;
+    if (!settings.autoReload) {
+        debugLogEvery('stuckNoReload', 60000, 'Live view stuck on an error for ' + secondsSince(stuckSince) + '; auto-reload is off');
+        return;
+    }
+    const lastReload = lastReloadAt();
+    if (now - lastReload < STUCK_MIN_RELOAD_INTERVAL_MS) {
+        debugLogEvery('stuckReloadWait', 60000, 'Live view stuck on an error; reload skipped, last one was ' + secondsSince(lastReload) + ' ago');
+        return;
+    }
+    reloadPage('live view stuck on an error with no Reconnect button for ' + secondsSince(stuckSince));
+}
 
 function checkEndedWatchdog() {
-    if (!findEndedMessages().length) {
+    const errors = describeErrorModals();
+    const summary = errors.join(' | ');
+    if (summary !== lastErrorSummary) {
+        debugLog('Live view errors on screen: ' + (errors.length ? errors.length + ' [' + summary + ']' : 'none'));
+        lastErrorSummary = summary;
+    }
+    if (!errors.length && !findEndedMessages().length && !findUnreachableMessages().length) {
+        if (endedSince) debugLog('Live view error gone after ' + secondsSince(endedSince));
         endedSince = 0;
+        stuckSince = 0;
         return;
     }
     const now = Date.now();
     if (!endedSince) {
         endedSince = now;
-        debugLog('Live view ended message detected');
+        endedRetryAt = 0;
         return;
     }
-    if (!settings.autoReload || now - endedSince < ENDED_RELOAD_MS) return;
-    let lastReload = 0;
-    try { lastReload = Number(sessionStorage.getItem(RELOAD_KEY)) || 0; } catch (_) {}
-    if (now - lastReload < MIN_ENDED_RELOAD_INTERVAL_MS) return;
-    try { sessionStorage.setItem(RELOAD_KEY, String(now)); } catch (_) {}
-    debugLog('Live view ended message still shown after ' + (ENDED_RELOAD_MS / 1000) + 's; reloading the page');
-    bumpStat('reloads');
-    location.reload();
+    checkStuckErrors(now);
+    if (now - Math.max(endedSince, endedRetryAt) < ENDED_RETRY_MS) return;
+    endedRetryAt = now;
+    clickState = new WeakMap();
+    debugLog('Live view error still shown after ' + secondsSince(endedSince) + '; retrying reconnect without waiting for the backoff');
 }
 
 const videoTimes = new WeakMap();
 let watchedUrl = null;
 let lastVideoProgressAt = 0;
+let stallLogged = false;
+let lastVideoCount = -1;
 
 function checkVideoWatchdog() {
     let progressing = false;
-    for (const video of document.querySelectorAll('video')) {
+    const videos = document.querySelectorAll('video');
+    if (videos.length !== lastVideoCount) {
+        debugLog('Video elements in page: ' + Math.max(lastVideoCount, 0) + ' -> ' + videos.length);
+        lastVideoCount = videos.length;
+    }
+    for (const video of videos) {
         const t = video.currentTime;
         if (t > 0 && videoTimes.has(video) && videoTimes.get(video) !== t) progressing = true;
         videoTimes.set(video, t);
     }
     const now = Date.now();
     if (progressing) {
+        if (stallLogged) debugLog('Video progress resumed after ' + secondsSince(lastVideoProgressAt));
+        else if (watchedUrl !== location.href) debugLog('Video playing; reload watchdog armed for ' + location.href);
+        stallLogged = false;
         watchedUrl = location.href;
         lastVideoProgressAt = now;
         return;
     }
     if (watchedUrl !== location.href) {
+        if (watchedUrl) debugLog('Reload watchdog disarmed: URL changed from ' + watchedUrl + ' to ' + location.href);
         watchedUrl = null;
         return;
     }
-    if (!settings.autoReload || now - lastVideoProgressAt < WATCHDOG_MS) return;
+    if (!stallLogged && now - lastVideoProgressAt >= STALL_LOG_MS) {
+        stallLogged = true;
+        debugLog('No video progress for ' + secondsSince(lastVideoProgressAt) + ' (' + videos.length + ' video element(s))');
+    }
+    if (now - lastVideoProgressAt < WATCHDOG_MS) return;
+    if (!settings.autoReload) {
+        debugLogEvery('videoNoReload', 60000, 'No live video for ' + secondsSince(lastVideoProgressAt) + '; auto-reload is off');
+        return;
+    }
+    const lastReload = lastReloadAt();
+    if (now - lastReload < MIN_RELOAD_INTERVAL_MS) {
+        debugLogEvery('videoReloadWait', 60000, 'No live video; reload skipped, last one was ' + secondsSince(lastReload) + ' ago');
+        return;
+    }
+    reloadPage('no live video for ' + (WATCHDOG_MS / 60000) + ' min');
+}
 
-    let lastReload = 0;
-    try { lastReload = Number(sessionStorage.getItem(RELOAD_KEY)) || 0; } catch (_) {}
-    if (now - lastReload < MIN_RELOAD_INTERVAL_MS) return;
-    try { sessionStorage.setItem(RELOAD_KEY, String(now)); } catch (_) {}
-    debugLog('No live video for ' + (WATCHDOG_MS / 60000) + ' min; reloading the page');
-    bumpStat('reloads');
-    location.reload();
+let lastStatusLogAt = 0;
+
+function logStatus() {
+    const now = Date.now();
+    if (now - lastStatusLogAt < STATUS_LOG_MS) return;
+    lastStatusLogAt = now;
+    const videos = [...document.querySelectorAll('video')];
+    const lastReload = lastReloadAt();
+    debugLog('Status: ' + JSON.stringify({
+        url: location.href,
+        videos: videos.length,
+        playing: videos.filter(v => !v.paused && !v.ended && v.readyState > 2).length,
+        lastProgress: lastVideoProgressAt ? secondsSince(lastVideoProgressAt) + ' ago' : 'never',
+        watchdogArmed: watchedUrl === location.href,
+        endedMessageFor: endedSince ? secondsSince(endedSince) : null,
+        knownButtons: findKnownButtons().length,
+        trustedClicks,
+        autoReload: settings.autoReload,
+        lastReload: lastReload ? secondsSince(lastReload) + ' ago' : 'never',
+        hidden: document.hidden,
+        online: navigator.onLine,
+        memoryMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null
+    }));
+}
+
+function logPageStart() {
+    const nav = performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;
+    let reason = null;
+    try {
+        reason = sessionStorage.getItem(RELOAD_REASON_KEY);
+        sessionStorage.removeItem(RELOAD_REASON_KEY);
+    } catch (_) {}
+    const lastReload = lastReloadAt();
+    debugLog('Page start: ' + JSON.stringify({
+        url: location.href,
+        navigation: nav ? nav.type : 'unknown',
+        wasDiscarded: !!document.wasDiscarded,
+        referrer: document.referrer || null,
+        reloadedByRingup: reason,
+        lastRingupReload: lastReload ? new Date(lastReload).toLocaleTimeString() : null,
+        hidden: document.hidden
+    }));
+}
+
+function watchPageLifecycle() {
+    window.addEventListener('pagehide', e => {
+        debugLog('Page hide: ' + location.href + (e.persisted ? ' (kept in back/forward cache)' : '') +
+            ' | ' + (reloadReason ? 'reload by Ringup: ' + reloadReason : 'not triggered by Ringup'));
+        flushLog();
+    });
+    window.addEventListener('pageshow', e => {
+        if (e.persisted) debugLog('Page restored from back/forward cache');
+    });
+    document.addEventListener('freeze', () => {
+        debugLog('Page frozen by the browser');
+        flushLog();
+    });
+    document.addEventListener('resume', () => debugLog('Page resumed after being frozen'));
+    window.addEventListener('online', () => debugLog('Network online'));
+    window.addEventListener('offline', () => debugLog('Network offline'));
+    document.addEventListener('ringup-log', e => {
+        if (typeof e.detail === 'string') debugLog('Page: ' + e.detail);
+    });
+    document.addEventListener('click', e => {
+        if (!e.isTrusted || !(e.target instanceof Element)) return;
+        const el = e.target.closest('button, a, [role="button"], [data-testid]') || e.target;
+        debugLog('Click on page at ' + Math.round(e.clientX) + ',' + Math.round(e.clientY) + ': ' + JSON.stringify({
+            tagName: el.tagName,
+            testId: el.getAttribute('data-testid'),
+            ariaLabel: el.getAttribute('aria-label'),
+            text: norm(el.innerText || el.textContent).slice(0, 80),
+            outerHTML: (el.outerHTML || '').replace(/\s+/g, ' ').slice(0, 400)
+        }));
+    }, true);
+}
+
+const MEDIA_EVENTS = ['loadstart', 'loadeddata', 'playing', 'pause', 'ended', 'emptied', 'stalled', 'waiting', 'error', 'abort'];
+const MEDIA_LOG_THROTTLE_MS = 10000;
+const mediaLogTimes = new WeakMap();
+
+function videoName(video) {
+    const index = [...document.querySelectorAll('video')].indexOf(video);
+    const root = playerRootOf(video);
+    const header = root && root.querySelector('[data-testid="video-player-header"]');
+    const name = header ? norm(header.textContent).slice(0, 40) : '';
+    return '#' + index + (name ? ' "' + name + '"' : '');
+}
+
+function watchMedia() {
+    for (const type of MEDIA_EVENTS) {
+        document.addEventListener(type, e => {
+            const video = e.target;
+            if (!(video instanceof HTMLMediaElement)) return;
+            const times = mediaLogTimes.get(video) || {};
+            mediaLogTimes.set(video, times);
+            const now = Date.now();
+            if (type !== 'error' && now - (times[type] || 0) < MEDIA_LOG_THROTTLE_MS) return;
+            times[type] = now;
+            let detail = ' t=' + video.currentTime.toFixed(1) + ' readyState=' + video.readyState + ' networkState=' + video.networkState;
+            if (type === 'error' && video.error) detail += ' error=' + video.error.code + ' ' + (video.error.message || '');
+            debugLog('Video ' + type + ': ' + videoName(video) + detail);
+        }, true);
+    }
 }
 
 function inspectReconnectButton() {
@@ -562,7 +923,7 @@ function logClickTarget(el) {
     const rect = el.getBoundingClientRect();
     const html = (el.outerHTML || '').replace(/\s+/g, ' ');
     const parent = el.parentElement ? (el.parentElement.outerHTML || '').replace(/\s+/g, ' ') : '';
-    console.log('[Ringup] Click target:\n' + JSON.stringify({
+    debugLog('Click target: ' + JSON.stringify({
         tagName: el.tagName,
         innerText: (el.innerText || '').slice(0, 80),
         ariaLabel: el.getAttribute('aria-label'),
@@ -572,7 +933,7 @@ function logClickTarget(el) {
         elementAtCenter: (document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) || {}).tagName || null,
         outerHTML: html.slice(0, 600),
         parentHTML: parent.slice(0, 1200)
-    }, null, 2));
+    }));
 }
 
 function exposeManualTrigger() {
@@ -657,9 +1018,11 @@ function initialize() {
 
         function poll() {
             logScanState();
+            resumeLiveView();
             reconnect(true);
             checkVideoWatchdog();
             checkEndedWatchdog();
+            logStatus();
         }
 
         function completeInitialization() {
@@ -677,7 +1040,7 @@ function initialize() {
             scheduleNextPoll();
             exposeManualTrigger();
             document.addEventListener('visibilitychange', () => {
-                debugLog('Tab ' + (document.hidden ? 'hidden' : 'visible') + ' at ' + new Date().toLocaleTimeString());
+                debugLog('Tab ' + (document.hidden ? 'hidden' : 'visible'));
             });
             debugLog('Initialization complete. Manual: ringupReconnect()');
         }
@@ -693,4 +1056,8 @@ function initialize() {
 }
 
 loadSettings();
+takeResumeFlag();
+logPageStart();
+watchPageLifecycle();
+watchMedia();
 initialize();
